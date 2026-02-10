@@ -83,7 +83,9 @@ func removeChunkState(uploadID string) {
 	chunkUploadsMutex.Lock()
 	defer chunkUploadsMutex.Unlock()
 	if state, exists := chunkUploads[uploadID]; exists {
-		_ = os.RemoveAll(state.chunkDir)
+		if err := os.RemoveAll(state.chunkDir); err != nil {
+			log.Errorf("failed to remove chunk directory %s: %v", state.chunkDir, err)
+		}
 		delete(chunkUploads, uploadID)
 	}
 }
@@ -168,9 +170,9 @@ func FsStreamChunked(c *gin.Context) {
 		common.ErrorResp(c, fmt.Errorf("failed to create chunk file: %w", err), 500)
 		return
 	}
+	defer chunkFile.Close()
 
 	_, err = utils.CopyWithBuffer(chunkFile, c.Request.Body)
-	chunkFile.Close()
 	if err != nil {
 		common.ErrorResp(c, fmt.Errorf("failed to write chunk: %w", err), 500)
 		return
@@ -268,20 +270,27 @@ func assembleChunks(state *chunkUploadState) (*os.File, int64, error) {
 		return nil, 0, fmt.Errorf("failed to create assembled file: %w", err)
 	}
 
+	cleanupAssembled := func() {
+		if err := assembledFile.Close(); err != nil {
+			log.Errorf("failed to close assembled file: %v", err)
+		}
+		if err := os.Remove(assembledFile.Name()); err != nil {
+			log.Errorf("failed to remove assembled file %s: %v", assembledFile.Name(), err)
+		}
+	}
+
 	var totalSize int64
 	for i := 0; i < state.totalChunks; i++ {
 		chunkPath := filepath.Join(state.chunkDir, fmt.Sprintf("%d", i))
 		chunkFile, err := os.Open(chunkPath)
 		if err != nil {
-			assembledFile.Close()
-			os.Remove(assembledFile.Name())
+			cleanupAssembled()
 			return nil, 0, fmt.Errorf("failed to open chunk %d: %w", i, err)
 		}
 		n, err := utils.CopyWithBuffer(assembledFile, chunkFile)
 		chunkFile.Close()
 		if err != nil {
-			assembledFile.Close()
-			os.Remove(assembledFile.Name())
+			cleanupAssembled()
 			return nil, 0, fmt.Errorf("failed to copy chunk %d: %w", i, err)
 		}
 		totalSize += n
@@ -289,8 +298,7 @@ func assembleChunks(state *chunkUploadState) (*os.File, int64, error) {
 
 	_, err = assembledFile.Seek(0, io.SeekStart)
 	if err != nil {
-		assembledFile.Close()
-		os.Remove(assembledFile.Name())
+		cleanupAssembled()
 		return nil, 0, fmt.Errorf("failed to seek assembled file: %w", err)
 	}
 
