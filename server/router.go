@@ -210,6 +210,7 @@ func _fs(g *gin.RouterGroup) {
 	g.POST("/remove_empty_directory", handles.FsRemoveEmptyDirectory)
 	uploadLimiter := middlewares.UploadRateLimiter(stream.ClientUploadLimit)
 	g.PUT("/put", middlewares.FsUp, uploadLimiter, handles.FsStream)
+	g.PUT("/put_chunk", middlewares.FsUp, uploadLimiter, handles.FsStreamChunked)
 	g.PUT("/form", middlewares.FsUp, uploadLimiter, handles.FsForm)
 	g.POST("/link", middlewares.AuthAdmin, handles.Link)
 	// g.POST("/add_aria2", handles.AddOfflineDownload)
